@@ -94,8 +94,8 @@ SigmaMod (0.3.0 or later, for the trailer hitches' JSON shorthand and the rarer 
 
 ## Install
 
-Unzip into the game folder so that `BepInEx/plugins/BurnersUtilities/BurnersUtilities.dll` exists. Remove the
-older `RideAlong` and `RopeMod` folders if you had them.
+Unzip the release into `Apocalypter/BepInEx/plugins`, so that `BepInEx/plugins/BurnersUtilities/BurnersUtilities.dll`
+exists. Remove the older `RideAlong` and `RopeMod` folders if you had them.
 
 ## Build
 
