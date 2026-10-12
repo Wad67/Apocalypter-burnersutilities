@@ -1,0 +1,8 @@
+{
+  "steel_cable_kit": {
+    "fsm": {
+      "ID": { "ID": "SteelCableTools" },
+      "ItemName": { "ItemName": "Steel Cable Kit" }
+    }
+  }
+}
