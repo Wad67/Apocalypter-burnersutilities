@@ -6,157 +6,338 @@ using UnityEngine;
 
 namespace BurnersUtilities
 {
-    // A rope tied between two points on anything: two moving bodies, a body and the world, or two fixed
-    // things (then it only hangs there). A rope only pulls: it keeps the two ends from getting further apart
-    // than its length and lets them come together freely, swing and turn. Pulled harder than its breaking
-    // strength it snaps. Drawn as a line that hangs in a curve when slack (a shallow catenary: a rope of
-    // length L across a gap d sags by about sqrt(3 d (L - d) / 8) in the middle).
+    // A rope (or hose) from one end to the other through any number of points in between, on anything: moving
+    // bodies, the world, things being carried. It runs freely over the points in between, as over 1:1 pulleys,
+    // so it has one tension all along and only its total length is held: the sum of its runs can't exceed it.
+    // It only pulls, and pulled harder than its breaking strength it snaps. Slack, each run hangs in a curve (a
+    // shallow catenary: a run of length L across a gap d sags by about sqrt(3 d (L - d) / 8) in the middle), the
+    // slack shared out between the runs by their lengths.
+    //
+    // Each point is on the thing it was tied to (the collider's own object, in its own space), and goes where that
+    // thing goes: picked up, put down, locked into a load bed or fitted, it is still on it. What it pulls on is
+    // whatever body that thing is part of at the moment.
+    //
+    // A rope stretches like a spring, as a real one does: its stiffness is its breaking strength over the stretch
+    // it breaks at (the kit's 'stretch'), over its length, with damping near critical for what it pulls. Each
+    // physics step that spring is worked as one constraint on the rope's length (a soft constraint, solved
+    // implicitly so it is stable at any stiffness): the bodies at its points get the impulse it pulls with (through
+    // their mass and turning inertia, at the points). Two heavy vehicles moving a little against each other on
+    // their suspension pull on a hose between them only as hard as that small stretch does. A point on something with no body of its own, or a
+    // kinematic one, is moved by something else: it pulls the rest of the rope along and nothing pulls it back.
+    // A thing in the player's hands is held by the player: the rope pulls it no harder than a hand can hold
+    // (HandForce), and a held thing can't be taken further than the rope reaches (it is held back at the end
+    // of it, after the game places it each frame).
     internal sealed class Rope : MonoBehaviour
     {
         public static readonly List<Rope> All = new List<Rope>();
 
-        private const int Segments = 24;
+        private const int SegmentsPerRun = 12;
+        private const float Damping = 1f;        // the rope's damping ratio, for the mass it pulls
+        private const float HandForce = 400f;    // N: the most a held thing pulls (or is pulled) with
+        private const float HeldSlack = 0.03f;   // m: a held thing is held back only past this much stretch
+        private const float PulledFree = 0.3f;   // m: held back further than this from the hand, it is pulled out of it
 
-        // each end: the thing it is tied to and the point on it, in that thing's own space
-        private Transform _a, _b;
-        private Vector3 _localA, _localB;
-        private float _length;
+        // a point the rope is tied to or runs over, on a thing, in that thing's own space
+        public sealed class Point
+        {
+            public Transform T;
+            public Vector3 Local;
+            public Vector3 World => T.TransformPoint(Local);
+            public Vector3 Velocity;      // of a point nothing pulls back (from its frames)
+            public Vector3 Last;
+            public bool Seen;
+            // a grabbed thing's: where the hand puts it this frame, before it is held back to the rope's reach. The
+            // rope works from there (that is how far and how fast the hand pulls); where it is held is only shown.
+            public Vector3 Wanted;
+            public int WantedFrame = -10;
+            public Vector3 Pulled => WantedFrame >= Time.frameCount - 1 ? Wanted : World;
+        }
+
+        private readonly List<Point> _points = new List<Point>();
+        private float _length, _tension;
         private RopeKind _kind;
-        private ConfigurableJoint _joint;
         private LineRenderer _line;
+
+        public RopeKind Kind => _kind;
+        public IList<Point> Points => _points;
+        public float Tension => _tension;
 
         public float Length
         {
             get { return _length; }
-            set
-            {
-                _length = Mathf.Max(0.1f, value);
-                if (_joint != null) _joint.linearLimit = new SoftJointLimit { limit = _length };
-            }
+            set { _length = Mathf.Max(0.1f, value); }
         }
 
-        public Vector3 EndA { get { return _a != null ? _a.TransformPoint(_localA) : Vector3.zero; } }
-        public Vector3 EndB { get { return _b != null ? _b.TransformPoint(_localB) : Vector3.zero; } }
+        public Vector3 EndA => _points.Count > 0 && _points[0].T != null ? _points[0].World : Vector3.zero;
+        public Vector3 EndB => _points.Count > 0 && _points[_points.Count - 1].T != null ? _points[_points.Count - 1].World : Vector3.zero;
 
-        public static Rope Tie(RopeKind kind, Collider ca, Vector3 pa, Collider cb, Vector3 pb, float slack)
+        // a rope through points (the thing each is on, and where, in the world), as long as its runs plus slack
+        public static Rope Tie(RopeKind kind, IList<KeyValuePair<Transform, Vector3>> at, float slack)
         {
-            var go = new GameObject("Rope");
+            var go = new GameObject(kind.IsHose ? "Hose" : "Rope");
             var rope = go.AddComponent<Rope>();
             rope._kind = kind;
-            // tied to the moving body a collider is part of, else to the collider itself
-            rope._a = ca.attachedRigidbody != null ? ca.attachedRigidbody.transform : ca.transform;
-            rope._b = cb.attachedRigidbody != null ? cb.attachedRigidbody.transform : cb.transform;
-            rope._localA = rope._a.InverseTransformPoint(pa);
-            rope._localB = rope._b.InverseTransformPoint(pb);
-            rope._length = Mathf.Max(0.1f, Vector3.Distance(pa, pb) + slack);
+            float length = 0f;
+            for (int i = 0; i < at.Count; i++)
+            {
+                rope._points.Add(new Point { T = at[i].Key, Local = at[i].Key.InverseTransformPoint(at[i].Value) });
+                if (i > 0) length += Vector3.Distance(at[i - 1].Value, at[i].Value);
+            }
+            rope._length = Mathf.Max(0.1f, length + slack);
             rope._line = go.AddComponent<LineRenderer>();
             rope._line.useWorldSpace = true;
-            rope._line.positionCount = Segments + 1;
             rope._line.numCapVertices = 2;
             rope._line.sharedMaterial = kind.Material();
             rope._line.textureMode = LineTextureMode.Tile;
             rope._line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
-            rope.Bind(Body(rope._a), Body(rope._b));
+            if (kind.IsHose) Hose.Fit(rope, kind);
             All.Add(rope);
-            Plugin.Verbose(kind.Name + " tied: " + rope._a.name + " - " + rope._b.name + ", " + rope._length.ToString("0.00") + " m"
-                + (rope._joint != null ? "" : " (both ends fixed)"));
+            Plugin.Verbose(kind.Name + " tied, " + rope._length.ToString("0.00") + " m, stiffness " + (rope.Stiffness / 1000f).ToString("0.0") + " kN/m, breaks at "
+                + kind.Strength.ToString("0.##") + " kN: " + string.Join(" - ", rope._points.ConvertAll(rope.Describe).ToArray()));
             return rope;
         }
 
-        // The body each end is part of right now: the Rigidbody it or a parent has, none for the world or for a
-        // thing that has no body of its own at the moment (an item in the player's hands has its Rigidbody taken
-        // away; one the player holds is never tied to the player's own body).
+        // N/m: breaking strength over the stretch at break, along the whole length
+        private float Stiffness => _kind.Strength * 1000f / Mathf.Max(1e-4f, _kind.Elongation * _length);
+
+        // a point, for the log: what it is on and what it pulls on
+        private string Describe(Point p)
+        {
+            if (p.T == null) return "(gone)";
+            var rb = Body(p.T);
+            string on = rb != null ? rb.name + " " + rb.mass.ToString("0.#") + " kg" : Held(p.T, out _) ? "held" : "fixed";
+            return p.T.name + " [" + on + "]";
+        }
+
+        // the bodies the points pull on, to log when they change (picked up, put down, locked, fitted)
+        private string _bodies;
+
+        private void LogBodies()
+        {
+            if (!Plugin.VerboseLogEntry.Value) return;
+            string now = string.Join(" - ", _points.ConvertAll(Describe).ToArray());
+            if (now == _bodies) return;
+            if (_bodies != null) Plugin.Verbose(_kind.Name + " now on: " + now);
+            _bodies = now;
+        }
+
+        private static GameObject Global(string name) => Hands.Global(name);
+
+        private static bool Held(Transform t, out bool grabbed)
+        {
+            grabbed = Hands.Grabbed(t);
+            return Hands.Held(t);
+        }
+
+        // the body a point pulls on: the moving body its thing is part of; none for the world, a kinematic body
+        // or a held thing
         private static Rigidbody Body(Transform t)
         {
-            var rb = t != null ? t.GetComponentInParent<Rigidbody>() : null;
-            if (rb == null) return null;
-            var player = FsmVariables.GlobalVariables.FindFsmGameObject("Player");
-            if (player != null && player.Value != null && rb.transform.IsChildOf(player.Value.transform)) return null;
-            return rb;
+            if (t == null || Held(t, out _)) return null;
+            var rb = t.GetComponentInParent<Rigidbody>();
+            return rb != null && !rb.isKinematic ? rb : null;
         }
 
-        // The joint goes on an end that can move and holds it to the other end: the other body, or, when the
-        // other end has no body, the point where that end is, followed every physics step (fixed for the world,
-        // moving for a thing being carried, which drags the roped thing along).
-        private Rigidbody _bodyA, _bodyB;
-        private bool _ownerIsA;
-
-        private void Bind(Rigidbody ra, Rigidbody rb)
+        // cut by the player
+        public void CutBy(string why)
         {
-            _bodyA = ra; _bodyB = rb;
-            if (ra == rb) return;                    // both ends on one body (or neither has one): nothing to hold
-            _ownerIsA = ra != null && (rb == null || !ra.isKinematic || rb.isKinematic);
-            var body = _ownerIsA ? ra : rb;
-            var connected = _ownerIsA ? rb : ra;
-            Vector3 ownerPoint = _ownerIsA ? EndA : EndB, otherPoint = _ownerIsA ? EndB : EndA;
-            _joint = body.gameObject.AddComponent<ConfigurableJoint>();
-            _joint.autoConfigureConnectedAnchor = false;
-            _joint.anchor = body.transform.InverseTransformPoint(ownerPoint);
-            _joint.connectedBody = connected;
-            _joint.connectedAnchor = connected != null ? connected.transform.InverseTransformPoint(otherPoint) : otherPoint;
-            _joint.xMotion = _joint.yMotion = _joint.zMotion = ConfigurableJointMotion.Limited;
-            _joint.angularXMotion = _joint.angularYMotion = _joint.angularZMotion = ConfigurableJointMotion.Free;
-            _joint.linearLimit = new SoftJointLimit { limit = _length };
-            _joint.enableCollision = true;
-            _joint.enablePreprocessing = false;
-            _joint.breakForce = _kind.Strength * 1000f;
-            _joint.breakTorque = float.PositiveInfinity;
-            _bound = true;
-        }
-
-        // its joint has to go now (the body it is on is about to lose its Rigidbody, or an end changed body); it
-        // ties on again to whatever the ends are part of
-        public void Unbind()
-        {
-            if (_joint != null) DestroyImmediate(_joint);
-            _joint = null;
-            _bound = false;   // let go on purpose, not snapped
+            Plugin.Verbose(_kind.Name + " " + why);
+            Cut();
         }
 
         public void Cut()
         {
-            Unbind();
             All.Remove(this);
             Destroy(gameObject);
         }
 
+        private bool Broken()
+        {
+            foreach (var p in _points) if (p.T == null) return true;
+            return false;
+        }
+
+        // per body: the rope's pull direction summed over its points (linear, and turning about its centre)
+        private readonly Dictionary<Rigidbody, Vector3> _lin = new Dictionary<Rigidbody, Vector3>();
+        private readonly Dictionary<Rigidbody, Vector3> _ang = new Dictionary<Rigidbody, Vector3>();
+        private Vector3[] _world = new Vector3[0], _grad = new Vector3[0];
+
         private void FixedUpdate()
         {
-            if (_a == null || _b == null) return;
-            // the joint gone by itself: pulled past its strength
-            if (_bound && _joint == null)
+            if (_points.Count < 2 || Broken()) return;
+            float dt = Time.fixedDeltaTime;
+            int n = _points.Count;
+            if (_world.Length != n) { _world = new Vector3[n]; _grad = new Vector3[n]; }
+            float total = 0f;
+            for (int i = 0; i < n; i++) _world[i] = _points[i].Pulled;
+            for (int i = 0; i < n; i++) _grad[i] = Vector3.zero;
+            for (int i = 0; i + 1 < n; i++)
             {
-                Plugin.Verbose(_kind.Name + " snapped: " + _a.name + " - " + _b.name);
+                Vector3 run = _world[i + 1] - _world[i];
+                float d = run.magnitude;
+                total += d;
+                if (d < 1e-4f) continue;
+                Vector3 u = run / d;          // from i towards i + 1
+                _grad[i] -= u;                // moving i away from i + 1 lengthens the rope
+                _grad[i + 1] += u;
+            }
+            float stretch = total - _length;
+            if (stretch <= 0f) { _tension = Mathf.Lerp(_tension, 0f, 0.5f); return; }   // slack: no pull
+
+            // how fast the rope is lengthening, and how hard it is to stop (its bodies' mass at the points)
+            _lin.Clear(); _ang.Clear();
+            float rate = 0f;
+            bool held = false;
+            for (int i = 0; i < n; i++)
+            {
+                var p = _points[i];
+                var rb = Body(p.T);
+                if (rb == null)
+                {
+                    held |= Held(p.T, out _);
+                    rate += Vector3.Dot(_grad[i], p.Velocity);
+                    continue;
+                }
+                rate += Vector3.Dot(_grad[i], rb.GetPointVelocity(_world[i]));
+                _lin.TryGetValue(rb, out var l);
+                _ang.TryGetValue(rb, out var a);
+                _lin[rb] = l + _grad[i];
+                _ang[rb] = a + Vector3.Cross(_world[i] - rb.worldCenterOfMass, _grad[i]);
+            }
+            float k = 0f;
+            foreach (var kv in _lin)
+            {
+                var rb = kv.Key;
+                Vector3 g = kv.Value, ga = _ang[rb];
+                k += g.sqrMagnitude / rb.mass + Vector3.Dot(ga, InverseInertia(rb, ga));
+            }
+            if (k <= 0f) { _tension = 0f; return; }
+
+            // the spring's impulse this step (a soft constraint: spring and damper for the mass it pulls, implicit)
+            float stiffness = Stiffness;
+            float damper = 2f * Damping * Mathf.Sqrt(stiffness / k);
+            float soft = damper + dt * stiffness;
+            float gamma = 1f / (dt * soft), beta = dt * stiffness / soft;
+            float impulse = (rate + beta * stretch / dt) / (k + gamma);
+            if (impulse <= 0f) { _tension = Mathf.Lerp(_tension, 0f, 0.5f); return; }
+            if (held) impulse = Mathf.Min(impulse, HandForce * dt);
+            // snapping: on the pull, held over a few steps (not a single step's spike); it never pulls harder than
+            // it breaks at
+            _tension = Mathf.Lerp(_tension, impulse / dt, 0.35f);
+            if (_tension > _kind.Strength * 1000f)
+            {
+                Plugin.Verbose(_kind.Name + " snapped at " + (_tension / 1000f).ToString("0.00") + " kN: stretched " + (stretch * 1000f).ToString("0") + " mm over "
+                    + _length.ToString("0.00") + " m, lengthening at " + rate.ToString("0.00") + " m/s; " + string.Join(" - ", _points.ConvertAll(Describe).ToArray()));
                 Cut();
                 return;
             }
-            // an end picked up, put down, fitted or locked down: tie on again to what the ends are now
-            Rigidbody ra = Body(_a), rb = Body(_b);
-            if (_joint != null && (ra != _bodyA || rb != _bodyB)) Unbind();
-            if (_joint == null && (ra != _bodyA || rb != _bodyB || !_bound)) Bind(ra, rb);
-            // an end with no body is a point the other end is held to, wherever it is now
-            if (_joint != null && _joint.connectedBody == null) _joint.connectedAnchor = _ownerIsA ? EndB : EndA;
-        }
-
-        private void LateUpdate()
-        {
-            // an end gone (destroyed, unloaded): the rope goes with it
-            if (_a == null || _b == null) { Cut(); return; }
-
-            Vector3 pa = EndA, pb = EndB;
-            float d = Vector3.Distance(pa, pb);
-            float sag = d < _length ? Mathf.Sqrt(3f * d * (_length - d) / 8f) : 0f;
-            sag = Mathf.Min(sag, _length * 0.5f);
-            float width = _kind.Thickness;
-            _line.startWidth = _line.endWidth = width;
-            for (int i = 0; i <= Segments; i++)
+            impulse = Mathf.Min(impulse, _kind.Strength * 1000f * dt);
+            foreach (var kv in _lin)
             {
-                float t = (float)i / Segments;
-                _line.SetPosition(i, Vector3.Lerp(pa, pb, t) + Vector3.down * (sag * 4f * t * (1f - t)));
+                var rb = kv.Key;
+                rb.velocity -= impulse * kv.Value / rb.mass;
+                rb.angularVelocity -= InverseInertia(rb, impulse * _ang[rb]);
+                rb.WakeUp();
             }
         }
 
-        private bool _bound;
+        // a body's inverse inertia (world space) applied to v
+        private static Vector3 InverseInertia(Rigidbody rb, Vector3 v)
+        {
+            Quaternion q = rb.rotation * rb.inertiaTensorRotation;
+            Vector3 local = Quaternion.Inverse(q) * v, inertia = rb.inertiaTensor;
+            local.x = inertia.x > 0f ? local.x / inertia.x : 0f;
+            local.y = inertia.y > 0f ? local.y / inertia.y : 0f;
+            local.z = inertia.z > 0f ? local.z / inertia.z : 0f;
+            return q * local;
+        }
+
+        // Without holding by force (Hands.HoldByForce off): a grabbed thing (the game places it in the hand every
+        // frame, after which this runs): where the hand put it
+        // is kept (Point.Wanted: the rope pulls the rest from there, as hard as a hand can), and the thing is held
+        // back to the end of the rope, along the rope, as far as the rest hasn't followed. Held back too far (the
+        // rope pulls harder than a hand holds), it is pulled out of the hand.
+        public static void HoldBack(GameObject item)
+        {
+            // held by force (HandHold), a grabbed thing is a body like any other: the rope pulls on it physically
+            if (item == null || All.Count == 0 || HandHold.On) return;
+            foreach (var rope in All)
+            {
+                if (rope == null || rope.Broken()) continue;
+                foreach (var p in rope._points)
+                    if (p.T.IsChildOf(item.transform)) { p.Wanted = p.World; p.WantedFrame = Time.frameCount; }
+            }
+            foreach (var rope in All)
+            {
+                if (rope == null || rope._points.Count < 2 || rope.Broken()) continue;
+                for (int i = 0; i < rope._points.Count; i++)
+                {
+                    var p = rope._points[i];
+                    if (!p.T.IsChildOf(item.transform)) continue;
+                    float total = 0f;
+                    for (int j = 0; j + 1 < rope._points.Count; j++) total += Vector3.Distance(rope._points[j].World, rope._points[j + 1].World);
+                    float over = total - rope._length - HeldSlack;
+                    if (over <= 0f) continue;
+                    // the way that point lengthens the rope, and back along it by the stretch
+                    Vector3 here = p.World, g = Vector3.zero;
+                    if (i > 0) g += (here - rope._points[i - 1].World).normalized;
+                    if (i + 1 < rope._points.Count) g += (here - rope._points[i + 1].World).normalized;
+                    if (g.sqrMagnitude < 1e-6f) continue;
+                    Vector3 back = g * (over / g.sqrMagnitude);
+                    item.transform.position -= back;
+                    // more than a hand can hold: pulled out of it (the grab's own drop)
+                    if (back.magnitude > PulledFree) { LetGo(item); return; }
+                }
+            }
+        }
+
+        private static void LetGo(GameObject item) => Hands.LetGo(item, "a rope pulls harder than a hand holds");
+
+        private void LateUpdate()
+        {
+            // a point's thing gone (destroyed, unloaded): the rope goes with it
+            if (_points.Count < 2 || Broken())
+            {
+                Plugin.Verbose(_kind.Name + " gone: " + (_points.Count < 2 ? "fewer than two points" : "point " + _points.FindIndex(x => x.T == null) + "'s thing was destroyed or unloaded"));
+                Cut();
+                return;
+            }
+            LogBodies();
+
+            // how the points nothing pulls back are moving (a carried thing, a vehicle part with no body)
+            float dt = Mathf.Max(1e-4f, Time.deltaTime);
+            foreach (var p in _points)
+            {
+                Vector3 w = p.Pulled;
+                p.Velocity = p.Seen ? (w - p.Last) / dt : Vector3.zero;
+                p.Last = w;
+                p.Seen = true;
+            }
+            Draw();
+        }
+
+        private void Draw()
+        {
+            int n = _points.Count;
+            float total = 0f;
+            for (int i = 0; i + 1 < n; i++) total += Vector3.Distance(_points[i].World, _points[i + 1].World);
+            float slack = Mathf.Max(0f, _length - total);
+            _line.positionCount = SegmentsPerRun * (n - 1) + 1;
+            _line.startWidth = _line.endWidth = _kind.Thickness;
+            int k = 0;
+            for (int i = 0; i + 1 < n; i++)
+            {
+                Vector3 pa = _points[i].World, pb = _points[i + 1].World;
+                float d = Vector3.Distance(pa, pb);
+                float share = total > 1e-4f ? slack * d / total : slack / (n - 1);
+                float sag = Mathf.Min(Mathf.Sqrt(3f * d * share / 8f), (d + share) * 0.5f);
+                for (int s = (i == 0 ? 0 : 1); s <= SegmentsPerRun; s++)
+                {
+                    float t = (float)s / SegmentsPerRun;
+                    _line.SetPosition(k++, Vector3.Lerp(pa, pb, t) + Vector3.down * (sag * 4f * t * (1f - t)));
+                }
+            }
+        }
 
         private void OnDestroy() { All.Remove(this); }
 
@@ -190,32 +371,18 @@ namespace BurnersUtilities
             }
             return best;
         }
-
-        // ropes tied to a thing that is about to lose its Rigidbody (fitted as a part, locked into a load bed)
-        public static void Release(GameObject go)
-        {
-            if (go == null) return;
-            foreach (var r in All.ToArray())
-                if (r != null && r._joint != null && r._joint.gameObject == go) r.Unbind();
-        }
     }
 
-    // The game takes an item's Rigidbody away when it is fitted or locked down (a DestroyComponent action),
-    // which Unity refuses while a rope's joint depends on it. The rope lets go first and ties on again to what
-    // the item became part of.
-    [HarmonyPatch(typeof(DestroyComponent), "OnEnter")]
-    internal static class ReleaseBeforeRigidbodyGoes
+    // The grab places the grabbed thing in the hand each frame (its 'ItemInHand' state: SetPosition in late update);
+    // straight after, a roped one is held back to the rope's reach.
+    [HarmonyPatch(typeof(SetPosition), "DoSetPosition")]
+    internal static class HoldBackGrabbed
     {
-        private static void Prefix(DestroyComponent __instance)
+        private static void Postfix(SetPosition __instance)
         {
-            try
-            {
-                if (Rope.All.Count == 0 || __instance.component == null) return;
-                var name = __instance.component.Value;
-                if (string.IsNullOrEmpty(name) || !name.EndsWith("Rigidbody")) return;
-                Rope.Release(__instance.Fsm.GetOwnerDefaultTarget(__instance.gameObject));
-            }
-            catch (System.Exception e) { Plugin.Verbose("rope release: " + e.Message); }
+            if (Rope.All.Count == 0 || __instance.Fsm == null || __instance.Fsm.Name != "GrabItem") return;
+            try { Rope.HoldBack(__instance.Fsm.GetOwnerDefaultTarget(__instance.gameObject)); }
+            catch (System.Exception e) { Plugin.Verbose("rope hold back: " + e.Message); }
         }
     }
 }

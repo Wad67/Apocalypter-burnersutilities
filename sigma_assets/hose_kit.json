@@ -1,0 +1,8 @@
+{
+  "hose_kit": {
+    "fsm": {
+      "ID": { "ID": "HoseTools" },
+      "ItemName": { "ItemName": "Hose Kit" }
+    }
+  }
+}

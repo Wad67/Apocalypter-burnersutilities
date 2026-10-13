@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using HutongGames.PlayMaker;
 using UnityEngine;
@@ -12,9 +13,10 @@ namespace BurnersUtilities
     // With the ropes out the game's grabbing is off (its left click would pick the thing up instead of tying
     // to it), and the put-away key (X) puts them away as well as Use on the kit.
     //
-    // With the ropes out: left click a point on anything, then a second point, and a rope is tied between them
-    // at that length. Right click drops a rope you have started, or cuts the rope you aim at. The mouse wheel
-    // aimed at a rope pays it out or takes it in. Holding something pauses it.
+    // With the ropes out: left click a point on anything, middle click any points it should run over (as over a
+    // pulley), then left click the other end, and a rope is tied through them at that length. Right click drops a
+    // rope you have started, or cuts the rope you aim at. The mouse wheel aimed at a rope pays it out or takes it
+    // in. Holding something pauses it. A hose's ends go into the container in the thing clicked (Hose.Snap).
     internal sealed class RopeTool : MonoBehaviour
     {
         private const float KitReach = 2f;         // the game's toolbox pick distance
@@ -22,32 +24,19 @@ namespace BurnersUtilities
         private const float PayOut = 0.1f;          // per wheel notch, m
 
         private RopeKind _out;
-        private Collider _startCollider;
-        private Vector3 _startPoint;
+        private static RopeTool _instance;
+        public static bool Out => _instance != null && _instance._out != null;
+        private void Awake() { _instance = this; }
+        private readonly List<KeyValuePair<Transform, Vector3>> _placed = new List<KeyValuePair<Transform, Vector3>>();
         private LineRenderer _preview;
         private AudioClip _toolboxClip;
         private bool _clipLooked;
         private GUIStyle _style;
+        private string _hoseStatus;
 
-        private static GameObject Global(string name)
-        {
-            var g = FsmVariables.GlobalVariables.FindFsmGameObject(name);
-            return g != null ? g.Value : null;
-        }
-
-        private Camera Eye()
-        {
-            var pc = Global("PlayerCamera");
-            var cam = pc != null ? pc.GetComponent<Camera>() : null;
-            return cam != null && cam.isActiveAndEnabled ? cam : Camera.main;
-        }
-
-        private static bool HandBusy()
-        {
-            var use = Global("HandItemUse");
-            var hand = Global("Hand");
-            return (use != null && use.transform.childCount > 0) || (hand != null && hand.transform.childCount > 0);
-        }
+        private static GameObject Global(string name) => Hands.Global(name);
+        private static Camera Eye() => Hands.Eye();
+        private static bool HandBusy() => Hands.Busy();
 
         private void Update()
         {
@@ -70,36 +59,45 @@ namespace BurnersUtilities
             if (_out == null) return;
             if (Input.GetKeyDown(Plugin.PutAwayKeyEntry.Value)) { PutAway(); return; }
             HoldGrab();
+            _hoseStatus = null;
             if (HandBusy()) { HidePreview(); return; }
 
             float reach = Plugin.ReachEntry.Value;
             RaycastHit hit;
             bool aimed = Pick(ray, reach, out hit);
 
+            // a placed point dropped when its thing is gone
+            if (_placed.Any(x => x.Key == null)) _placed.Clear();
+
             if (Input.GetMouseButtonDown(0) && aimed)
             {
-                if (_startCollider == null)
-                {
-                    _startCollider = hit.collider;
-                    _startPoint = hit.point;
-                }
+                var end = At(hit, true);
+                if (_placed.Count == 0) _placed.Add(end);
                 else
                 {
-                    if (_startCollider != null && Vector3.Distance(_startPoint, hit.point) > 0.05f)
-                        Rope.Tie(_out, _startCollider, _startPoint, hit.collider, hit.point, 0f);
-                    _startCollider = null;
+                    if (Vector3.Distance(_placed[_placed.Count - 1].Value, end.Value) > 0.05f || _placed.Count > 1)
+                    {
+                        _placed.Add(end);
+                        Rope.Tie(_out, _placed.ToArray(), 0f);
+                    }
+                    _placed.Clear();
                 }
+            }
+            else if (Input.GetMouseButtonDown(2) && aimed && _placed.Count > 0)
+            {
+                var over = At(hit, false);
+                if (Vector3.Distance(_placed[_placed.Count - 1].Value, over.Value) > 0.05f) _placed.Add(over);
             }
             else if (Input.GetMouseButtonDown(1))
             {
-                if (_startCollider != null) _startCollider = null;
+                if (_placed.Count > 0) _placed.Clear();
                 else
                 {
                     var r = Rope.Aimed(ray, reach, AimTolerance);
-                    if (r != null) r.Cut();
+                    if (r != null) r.CutBy("cut");
                 }
             }
-            else if (_startCollider == null)
+            else if (_placed.Count == 0)
             {
                 float wheel = Input.GetAxis("Mouse ScrollWheel");
                 if (Mathf.Abs(wheel) > 0.001f)
@@ -109,29 +107,28 @@ namespace BurnersUtilities
                 }
             }
 
+            // what the hose under the aim is doing
+            var aimedHose = _placed.Count == 0 ? Rope.Aimed(ray, reach, AimTolerance) : null;
+            var hose = aimedHose != null ? aimedHose.GetComponent<Hose>() : null;
+            _hoseStatus = hose != null ? hose.Status : null;
+
             // the end you are holding, to where you aim
-            if (_startCollider != null)
+            if (_placed.Count > 0)
             {
-                ShowPreview(_startPoint, aimed ? hit.point : ray.origin + ray.direction * reach);
+                Vector3 to = aimed ? At(hit, true).Value : ray.origin + ray.direction * reach;
+                ShowPreview(to);
             }
             else HidePreview();
         }
 
-        // what the aim hits within reach, not the player, not triggers
-        private static bool Pick(Ray ray, float reach, out RaycastHit hit)
+        // a point where the aim hits: on the collider's own object; a hose's end goes into a container there
+        private KeyValuePair<Transform, Vector3> At(RaycastHit hit, bool end)
         {
-            var player = Global("Player");
-            var hits = Physics.RaycastAll(ray, reach, ~0, QueryTriggerInteraction.Ignore);
-            hit = default(RaycastHit);
-            float best = float.MaxValue;
-            bool found = false;
-            foreach (var h in hits)
-            {
-                if (h.collider == null || (player != null && h.collider.transform.IsChildOf(player.transform))) continue;
-                if (h.distance < best) { best = h.distance; hit = h; found = true; }
-            }
-            return found;
+            if (end && _out != null && _out.IsHose) return Hose.Snap(hit.collider, hit.point);
+            return new KeyValuePair<Transform, Vector3>(hit.collider.transform, hit.point);
         }
+
+        private static bool Pick(Ray ray, float reach, out RaycastHit hit) => Hands.Pick(ray, reach, out hit);
 
         // the rope kit under the aim (the game's toolbox pick: 2 m, layers 0 and 9), by its ID
         private static RopeKind AimedAtKit(Ray ray)
@@ -148,41 +145,19 @@ namespace BurnersUtilities
             return null;
         }
 
-        // The player camera's 'GrabItem' picks up whatever loose thing a left click lands on. With the ropes out
-        // the hands are empty, so it is only ever waiting ('idle' / 'over'): it goes back to waiting (which
-        // clears its "grab" prompt) and is switched off, and on again when the ropes are put away.
-        private const string GrabFsm = "GrabItem";
-        private static readonly string[] Waiting = { "idle", "over" };
-        private PlayMakerFSM _grab;
+        // the game's grab is off while the ropes are out (its left click would pick the thing up)
+        private void HoldGrab() => Hands.HoldGrab(this);
+        private void ReleaseGrab() => Hands.ReleaseGrab(this);
 
-        private PlayMakerFSM Grab()
+        public void PutAwayIfOut()
         {
-            if (_grab == null)
-            {
-                var pc = Global("PlayerCamera");
-                _grab = pc != null ? pc.GetComponents<PlayMakerFSM>().FirstOrDefault(f => f.FsmName == GrabFsm) : null;
-            }
-            return _grab;
-        }
-
-        private void HoldGrab()
-        {
-            var g = Grab();
-            if (g == null || !g.enabled || !Waiting.Contains(g.ActiveStateName)) return;
-            if (g.ActiveStateName != "idle") g.SetState("idle");
-            g.enabled = false;
-        }
-
-        private void ReleaseGrab()
-        {
-            var g = Grab();
-            if (g != null && !g.enabled) g.enabled = true;
+            if (_out != null) PutAway();
         }
 
         private void TakeOut(RopeKind kind)
         {
             _out = kind;
-            _startCollider = null;
+            _placed.Clear();
             HoldGrab();
             Clack();
             Plugin.Verbose(kind.Name + " out");
@@ -191,7 +166,7 @@ namespace BurnersUtilities
         private void PutAway()
         {
             _out = null;
-            _startCollider = null;
+            _placed.Clear();
             HidePreview();
             ReleaseGrab();
             Clack();
@@ -210,7 +185,7 @@ namespace BurnersUtilities
             if (_toolboxClip != null && cam != null) AudioSource.PlayClipAtPoint(_toolboxClip, cam.transform.position, 0.3f);
         }
 
-        private void ShowPreview(Vector3 from, Vector3 to)
+        private void ShowPreview(Vector3 to)
         {
             if (_preview == null)
             {
@@ -218,14 +193,15 @@ namespace BurnersUtilities
                 go.hideFlags = HideFlags.HideAndDontSave;
                 _preview = go.AddComponent<LineRenderer>();
                 _preview.useWorldSpace = true;
-                _preview.positionCount = 2;
                 _preview.textureMode = LineTextureMode.Tile;
             }
             _preview.sharedMaterial = _out.Material();
             _preview.startWidth = _preview.endWidth = _out.Thickness;
             _preview.enabled = true;
-            _preview.SetPosition(0, from);
-            _preview.SetPosition(1, to);
+            _preview.positionCount = _placed.Count + 1;
+            for (int i = 0; i < _placed.Count; i++)
+                _preview.SetPosition(i, _placed[i].Value);
+            _preview.SetPosition(_placed.Count, to);
         }
 
         private void HidePreview()
@@ -241,10 +217,11 @@ namespace BurnersUtilities
             string title = _out.Name.ToUpperInvariant() + "\n";
             string text = HandBusy()
                 ? title + "Your hands are full."
-                : _startCollider == null
+                : _placed.Count == 0
                     ? title + "Left click: tie one from here\nRight click: cut the one you aim at\nMouse wheel on one: pay out / take in\n" + Plugin.PutAwayKeyEntry.Value + " (or Use on the kit): put it away"
-                    : title + "Left click: tie the other end here\nRight click: drop this one";
-            GUI.Label(new Rect(20f, 20f, 600f, 160f), text, _style);
+                    : title + "Left click: tie the other end here\nMiddle click: run it over this point\nRight click: drop this one";
+            if (_hoseStatus != null && !HandBusy()) text += "\n\n" + _hoseStatus;
+            GUI.Label(new Rect(20f, 20f, 600f, 200f), text, _style);
         }
     }
 }

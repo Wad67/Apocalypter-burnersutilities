@@ -17,6 +17,11 @@ namespace BurnersUtilities
         public float Thickness = 0.012f;  // m
         public int RowFrom, RowTo;        // texture rows of one strand, from the top
         public float Metallic, Smoothness = 0.1f;
+        public Color Color = new Color(0.36f, 0.29f, 0.19f);
+        public float Bore;                 // m, inside diameter; above zero: a hose
+        public float Elongation = 0.1f;    // its stretch at breaking strength, of its length
+
+        public bool IsHose => Bore > 0f;
 
         private Material _material;
 
@@ -32,8 +37,8 @@ namespace BurnersUtilities
             int rows = RowTo - RowFrom;
             if (tex == null || rows <= 0)
             {
-                Plugin.Log.LogWarning($"rope kit {Id}: no texture '{Texture}' (or no band); drawn plain");
-                _material.color = new Color(0.36f, 0.29f, 0.19f);
+                if (!string.IsNullOrEmpty(Texture)) Plugin.Log.LogWarning($"rope kit {Id}: no texture '{Texture}' (or no band); drawn plain");
+                _material.color = Color;
                 return _material;
             }
             _material.mainTexture = tex;
@@ -47,14 +52,24 @@ namespace BurnersUtilities
         }
     }
 
+    // What a hose carries, by the tag the game gives a container of it ([liquid: <tag>] sections)
+    internal sealed class LiquidKind
+    {
+        public string Tag;
+        public float Viscosity = 1e-6f;            // m2/s
+        public string Sound = "liquid_filling2";
+    }
+
     internal static class RopeKinds
     {
-        private const string Header = "# Burner's Utilities rope kits (format 1).";
+        private const string Header = "# Burner's Utilities rope kits (format 3).";
         private const string Resource = "BurnersUtilities.ropes.default.cfg";
 
         private static string _path;
         private static DateTime _stamp;
         private static Dictionary<string, RopeKind> _kinds = new Dictionary<string, RopeKind>();
+        private static Dictionary<string, LiquidKind> _liquids = new Dictionary<string, LiquidKind>();
+        private static readonly LiquidKind Unlisted = new LiquidKind { Tag = "?" };
 
         public static void Init(string configDir)
         {
@@ -82,6 +97,13 @@ namespace BurnersUtilities
             return _kinds.TryGetValue(id, out var k) ? k : null;
         }
 
+        // a liquid by its container tag; one not listed runs like water
+        public static LiquidKind Liquid(string tag)
+        {
+            Reload();
+            return tag != null && _liquids.TryGetValue(tag, out var l) ? l : Unlisted;
+        }
+
         private static void Reload()
         {
             if (_path == null || !File.Exists(_path)) return;
@@ -89,7 +111,9 @@ namespace BurnersUtilities
             if (stamp == _stamp) return;
             _stamp = stamp;
             var kinds = new Dictionary<string, RopeKind>();
+            var liquids = new Dictionary<string, LiquidKind>();
             RopeKind k = null;
+            LiquidKind liquid = null;
             int n = 0;
             foreach (var raw in File.ReadAllLines(_path))
             {
@@ -99,14 +123,34 @@ namespace BurnersUtilities
                 if (line.StartsWith("[") && line.EndsWith("]"))
                 {
                     string id = line.Substring(1, line.Length - 2).Trim();
-                    kinds[id] = k = new RopeKind { Id = id, Name = id };
+                    if (id.StartsWith("liquid:"))
+                    {
+                        string tag = id.Substring(7).Trim();
+                        liquids[tag] = liquid = new LiquidKind { Tag = tag };
+                        k = null;
+                    }
+                    else
+                    {
+                        kinds[id] = k = new RopeKind { Id = id, Name = id };
+                        liquid = null;
+                    }
                     continue;
                 }
                 int eq = line.IndexOf('=');
-                if (k == null || eq < 0) { Plugin.Log.LogWarning($"{Path.GetFileName(_path)} line {n}: expected [kit id] or key = value"); continue; }
+                if ((k == null && liquid == null) || eq < 0) { Plugin.Log.LogWarning($"{Path.GetFileName(_path)} line {n}: expected [kit id], [liquid: tag] or key = value"); continue; }
                 string key = line.Substring(0, eq).Trim(), val = line.Substring(eq + 1).Trim();
                 try
                 {
+                    if (liquid != null)
+                    {
+                        switch (key)
+                        {
+                            case "viscosity": liquid.Viscosity = Num(val, 1e-8f, 1f); break;
+                            case "sound": liquid.Sound = val; break;
+                            default: throw new FormatException("unknown key '" + key + "'");
+                        }
+                        continue;
+                    }
                     switch (key)
                     {
                         case "name": k.Name = val; break;
@@ -121,13 +165,21 @@ namespace BurnersUtilities
                             break;
                         case "metallic": k.Metallic = Num(val, 0, 1); break;
                         case "smoothness": k.Smoothness = Num(val, 0, 1); break;
+                        case "color":
+                            var c = val.Split(',');
+                            if (c.Length != 3) throw new FormatException("expected r, g, b");
+                            k.Color = new Color(Num(c[0], 0, 1), Num(c[1], 0, 1), Num(c[2], 0, 1));
+                            break;
+                        case "bore": k.Bore = Num(val, 0f, 0.2f); break;
+                        case "stretch": k.Elongation = Num(val, 0.1f, 500f) / 100f; break;
                         default: throw new FormatException("unknown key '" + key + "'");
                     }
                 }
                 catch (Exception e) { Plugin.Log.LogWarning($"{Path.GetFileName(_path)} line {n}: {e.Message}"); }
             }
             _kinds = kinds;
-            Plugin.Verbose("rope kits: " + string.Join(", ", kinds.Values.Select(x => $"{x.Id} ({x.Name}, {x.Strength} kN, {x.Thickness * 1000f:0} mm)").ToArray()));
+            _liquids = liquids;
+            Plugin.Verbose("rope kits: " + string.Join(", ", kinds.Values.Select(x => $"{x.Id} ({x.Name}, {x.Strength} kN, {x.Thickness * 1000f:0} mm{(x.IsHose ? $", {x.Bore * 1000f:0} mm bore hose" : "")})").ToArray()));
         }
 
         private static float Num(string s, float min, float max)

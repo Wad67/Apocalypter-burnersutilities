@@ -47,17 +47,50 @@ namespace BurnersUtilities
             body.velocity = v;
         }
 
+        // The player and their body, looked up again whenever what was found is gone: getting into a vehicle and
+        // out again takes the player's Rigidbody away and gives them a new one
         private static bool IsPlayer(GameObject go)
         {
             if (_player == null)
             {
                 var g = FsmVariables.GlobalVariables.FindFsmGameObject("Player");
                 _player = g != null ? g.Value : null;
-                _body = _player != null ? _player.GetComponent<Rigidbody>() : null;
-                _capsule = _player != null ? _player.GetComponent<CapsuleCollider>() : null;
+                _body = null;
+                _capsule = null;
                 _carry = Vector3.zero;
             }
-            return go == _player;
+            if (_player != null && _body == null) _body = _player.GetComponent<Rigidbody>();
+            if (_player != null && _capsule == null) _capsule = _player.GetComponent<CapsuleCollider>();
+            return go != null && go == _player;
+        }
+
+        // whether the player is standing on something (for HandHold: their feet's grip)
+        // What holds the player up (for HandHold: what their feet push against): seated, the vehicle they sit in
+        // (a body the player is part of, theirs taken away or held still); standing, what is under their feet (null
+        // for the ground). False in the air.
+        internal static bool Support(out Rigidbody under, out Vector3 feet, out bool seated)
+        {
+            IsPlayer(null);
+            under = null;
+            feet = _player != null ? _player.transform.position : Vector3.zero;
+            seated = false;
+            if (_player == null) return true;
+            var parentBody = _player.transform.parent != null ? _player.transform.parent.GetComponentInParent<Rigidbody>() : null;
+            if (_body == null || _body.isKinematic || parentBody != null)
+            {
+                seated = true;
+                under = parentBody;
+                return true;
+            }
+            var v = Ground(_body, out bool grounded, out under);
+            if (_capsule != null) feet = new Vector3(_capsule.bounds.center.x, _capsule.bounds.min.y, _capsule.bounds.center.z);
+            return grounded;
+        }
+
+        internal static Rigidbody PlayerBody()
+        {
+            IsPlayer(null);
+            return _body;
         }
 
         // what the player stands on: its velocity at their feet (null in the air); under is null for static ground
