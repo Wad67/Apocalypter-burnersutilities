@@ -35,6 +35,8 @@
     <Reference Include="NWH.VehiclePhysics2"><HintPath>$(ManagedDir)/NWH.VehiclePhysics2.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="NWH.Common"><HintPath>$(ManagedDir)/NWH.Common.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="PlayMaker"><HintPath>$(ManagedDir)/PlayMaker.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MapMagic"><HintPath>$(ManagedDir)/MapMagic.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Den.Tools"><HintPath>$(ManagedDir)/Den.Tools.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="ropes.default.cfg" LogicalName="BurnersUtilities.ropes.default.cfg" />

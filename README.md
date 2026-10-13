@@ -76,6 +76,33 @@ its trailer.
 All of this is the items' own JSON (the game's crate and hitch FSMs), so there is no setting for it. Nothing saves
 the hitching itself: if a trailer comes back loose after loading, hitch it again.
 
+## Faster save loading
+
+Easy Save, which the game saves with, finds a key in a save file by reading the file from the top and skipping
+every key before it, and does that again for every key the game loads. A save of a few MB with a few hundred keys
+is read hundreds of times over on every load.
+
+This reads each save once and remembers where each key's entry is. When the game loads a key, Easy Save is handed
+just that entry and reads it with its own code as before, so what comes out is the same. A key that isn't in the
+save is answered at once. If the file changes (you save), it is read again. Only the game's plain save files are
+handled this way; saving is untouched. Switch it off with `Saves.FastLoad` if you ever suspect it.
+
+## Faster terrain texturing
+
+The terrain generator (MapMagic) spends most of its time on one simple job: blending each terrain layer's weight
+map into the terrain's texture map. It reads every layer through a slow interface, several times per layer per pixel,
+hundreds of millions of times per tile. This does the same sums in the same order on plain arrays, so the terrain
+comes out exactly the same (checked bit for bit), in a fraction of the time. `Terrain.FastTexturing` switches it off.
+
+## Faster PlayMaker events
+
+Much of the game runs on PlayMaker FSMs, and they often send an event to an object and everything under it. To find
+who gets it, PlayMaker goes through every FSM in the world and checks, by walking up its parents, whether it sits
+under that object. With a few thousand FSMs in a loaded world, the few hundred events sent as everything starts up
+cost over a million of those walks: the seconds-per-frame stall just after a load. This asks the object for its own
+FSMs instead, and does the same for events sent to one object's FSMs by name. The same FSMs get the event, in the
+same order, with the same data. `PlayMaker.FastEvents` switches it off.
+
 ## Settings
 
 `BepInEx/config/com.burner.apocalypter.burnersutilities.cfg`, or the Apocasetter Mods menu.
@@ -86,7 +113,11 @@ the hitching itself: if a trailer comes back loose after loading, hitch it again
 | `Ropes.Enabled` | on | The rope kits and ropes. Off, the kits are inert toolboxes. |
 | `Ropes.Reach` | 3 m | How far you can tie a rope. |
 | `Ropes.PutAwayKey` | X | Key that puts the ropes away. |
+| `Saves.FastLoad` | on | Read each save once and look keys up directly. Takes effect on the next load. |
+| `Terrain.FastTexturing` | on | Faster terrain texture blending, same result. Takes effect on the next tile generated. |
+| `PlayMaker.FastEvents` | on | Find who gets a PlayMaker event directly instead of searching every FSM. |
 | `Debug.VerboseLog` | off | Extra diagnostics, and an FSM dump in `BepInEx/BurnersUtilities-fsm-dump.txt`. |
+| `Debug.TerrainSeams` | off | Log how far terrain tiles disagree at their edges, in `BepInEx/BurnersUtilities-seams.csv`. |
 
 ## Requirements
 
