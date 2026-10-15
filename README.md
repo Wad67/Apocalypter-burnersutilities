@@ -172,7 +172,7 @@ one of those), and in Apocaspawner:
 - **Truck Hitch**: the Rustchief's fifth wheel (about 150 kg).
 
 They bolt on like the game's plastic crate. Hold one against a vehicle and press Use to bolt it there with the
-wrench. Like a wheel, it only comes off again with the toolbox. Bolted on, it works like a vehicle's own hitch. Aim at it to see whether a
+wrench. Like a wheel, it only comes off again with the toolbox (the game's, or Ultimate Tools' wrench). Bolted on, it works like a vehicle's own hitch. Aim at it to see whether a
 trailer is in reach, and left click to hitch or unhitch. The trailer's coupler has to be within about 0.4 m of the
 hitch, with the trailer behind it. The hitch's front is the drawbar's end, or the saddle's closed end.
 

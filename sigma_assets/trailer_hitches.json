@@ -83,25 +83,14 @@
     },
 
     "de_Attach": {
-      "variables": { "bool": { "hitched": false } },
       "globalEvents": ["de_Attach"],
       "global": { "de_Attach": "de Attach" },
       "states": {
         "idle": {},
         "de Attach": {
           "actions": [
-            { "GetFsmBool": { "gameObject": "owner", "fsmName": "TrailerAttach", "variableName": "trailerAttached", "storeValue": "{hitched}" } },
-            { "BoolTest": { "boolVariable": "{hitched}", "isTrue": "hitched" } },
             { "SetLayer": { "gameObject": "owner", "layer": 9 } },
             { "SetTag": { "gameObject": "owner", "tag": "vehPartRemoved" } }
-          ],
-          "transitions": { "hitched": "hitched", "FINISHED": "idle" }
-        },
-        "hitched": {
-          "actions": [
-            { "UiTextSetText": { "gameObject": "{UI_ItemName_2}", "text": "Unhitch the trailer first" } },
-            { "Wait": { "time": 2 } },
-            { "UiTextSetText": { "gameObject": "{UI_ItemName_2}", "text": "" } }
           ],
           "transitions": { "FINISHED": "idle" }
         }
@@ -122,13 +111,28 @@
             { "EnableFSM": { "gameObject": "owner", "fsmName": "HitchUse", "enable": false } },
             { "NextFrameEvent": { "sendEvent": "next" } }
           ],
-          "transitions": { "next": "loose" }
+          "transitions": { "next": "vehPartRemoved" }
+        },
+        "vehPartRemoved": {
+          "actions": [
+            { "GameObjectCompareTag": { "gameObject": "{owner}", "tag": "vehPart", "trueEvent": "bolted" } },
+            { "SendEvent": { "eventTarget": "root/TrailerAttach", "sendEvent": "unhitch" } },
+            { "EnableFSM": { "gameObject": "owner", "fsmName": "HitchUse", "enable": false } },
+            { "SetParent": { "gameObject": "owner", "parent": null, "worldPositionStays": true } },
+            { "ColliderSetIsTrigger": { "gameObject": "owner", "isTrigger": false } },
+            { "EnableFSM": { "gameObject": "owner", "fsmName": "Attach", "enable": true } },
+            { "HasRigidBody": { "gameObject": "owner", "found": "{}", "foundEvent": "loose" } },
+            { "AddComponent": { "gameObject": "owner", "component": "UnityEngine.Rigidbody", "storeComponent": "{Rigidbody}" } },
+            { "SetMass": { "gameObject": "owner", "mass": "{mass}" } },
+            { "SetProperties": { "on": "{Rigidbody}", "collisionDetectionMode": "Continuous" } }
+          ],
+          "transitions": { "bolted": "vehPart", "loose": "loose", "FINISHED": "loose" }
         },
         "loose": {
           "actions": [{ "GameObjectCompareTag": { "gameObject": "{owner}", "tag": "vehPart", "trueEvent": "next", "everyFrame": true } }],
-          "transitions": { "next": "bolted" }
+          "transitions": { "next": "vehPart" }
         },
-        "bolted": {
+        "vehPart": {
           "actions": [
             { "DestroyComponent": { "gameObject": "owner", "component": "UnityEngine.Rigidbody" } },
             { "ColliderSetIsTrigger": { "gameObject": "owner", "isTrigger": true } },
@@ -136,21 +140,7 @@
             { "EnableFSM": { "gameObject": "owner", "fsmName": "HitchUse", "enable": true } },
             { "GameObjectCompareTag": { "gameObject": "{owner}", "tag": "vehPart", "falseEvent": "next", "everyFrame": true } }
           ],
-          "transitions": { "next": "removed" }
-        },
-        "removed": {
-          "actions": [
-            { "SendEvent": { "eventTarget": "root/TrailerAttach", "sendEvent": "unhitch" } },
-            { "EnableFSM": { "gameObject": "owner", "fsmName": "HitchUse", "enable": false } },
-            { "SetParent": { "gameObject": "owner", "parent": null, "worldPositionStays": true } },
-            { "ColliderSetIsTrigger": { "gameObject": "owner", "isTrigger": false } },
-            { "EnableFSM": { "gameObject": "owner", "fsmName": "Attach", "enable": true } },
-            { "HasRigidBody": { "gameObject": "owner", "found": "{}", "foundEvent": "next" } },
-            { "AddComponent": { "gameObject": "owner", "component": "UnityEngine.Rigidbody", "storeComponent": "{Rigidbody}" } },
-            { "SetMass": { "gameObject": "owner", "mass": "{mass}" } },
-            { "SetProperties": { "on": "{Rigidbody}", "collisionDetectionMode": "Continuous" } }
-          ],
-          "transitions": { "next": "loose", "FINISHED": "loose" }
+          "transitions": { "next": "vehPartRemoved" }
         }
       }
     },
@@ -289,20 +279,20 @@
         "taken": {
           "actions": [
             { "UiTextSetText": { "gameObject": "{UI_ItemName_2}", "text": "Trailer is hitched or tied to something else" } },
-            { "UiTextSetText": { "gameObject": "{UI_ItemUse}", "text": "" } },
-            { "Wait": { "time": 0.25 } }
+            { "GetFsmBool": { "gameObject": "owner", "fsmName": "TrailerAttach", "variableName": "trailerInRange_bool", "storeValue": "{inRange}", "everyFrame": true } },
+            { "BoolTest": { "boolVariable": "{inRange}", "isFalse": "changed", "everyFrame": true } }
           ],
-          "transitions": { "FINISHED": "over" }
+          "transitions": { "changed": "over" }
         },
-        "attached": { "use": "prompt", "with": { "status": "Trailer hitched", "action": "Unhitch: Left mouse button" } },
-        "inRange": { "use": "prompt", "with": { "status": "Trailer in reach", "action": "Hitch: Left mouse button" } },
+        "attached": { "use": "prompt", "with": { "status": "Trailer hitched", "action": "Unhitch: Left mouse button", "watch": "trailerAttached" } },
+        "inRange": { "use": "prompt", "with": { "status": "Trailer in reach", "action": "Hitch: Left mouse button", "watch": "trailerInRange_bool" } },
         "none": {
           "actions": [
             { "UiTextSetText": { "gameObject": "{UI_ItemName_2}", "text": "No trailer in reach" } },
-            { "UiTextSetText": { "gameObject": "{UI_ItemUse}", "text": "" } },
-            { "Wait": { "time": 0.25 } }
+            { "GetFsmBool": { "gameObject": "owner", "fsmName": "TrailerAttach", "variableName": "trailerInRange_bool", "storeValue": "{inRange}", "everyFrame": true } },
+            { "BoolTest": { "boolVariable": "{inRange}", "isTrue": "changed", "everyFrame": true } }
           ],
-          "transitions": { "FINISHED": "over" }
+          "transitions": { "changed": "over" }
         },
         "use": {
           "actions": [
@@ -321,9 +311,10 @@
         { "UiTextSetText": { "gameObject": "{UI_ItemName_2}", "text": "$status" } },
         { "UiTextSetText": { "gameObject": "{UI_ItemUse}", "text": "$action" } },
         { "GetMouseButtonDown": { "button": "Left", "sendEvent": "use", "inUpdateOnly": true } },
-        { "Wait": { "time": 0.25 } }
+        { "GetFsmBool": { "gameObject": "owner", "fsmName": "TrailerAttach", "variableName": "$watch", "storeValue": "{attached}", "everyFrame": true } },
+        { "BoolTest": { "boolVariable": "{attached}", "isFalse": "changed", "everyFrame": true } }
       ],
-      "transitions": { "use": "use", "FINISHED": "over" }
+      "transitions": { "use": "use", "changed": "over" }
     }
   },
 
