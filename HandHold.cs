@@ -156,7 +156,7 @@ namespace BurnersUtilities
             {
                 if (_rb == null || !On || Hands.Busy() || Cursor.lockState != CursorLockMode.Locked || Input.GetMouseButtonDown(0)) { StopBody(); return; }
                 float wheel = Input.GetAxis("Mouse ScrollWheel");
-                if (Mathf.Abs(wheel) > 0.001f) _distance = Mathf.Clamp(_distance + Mathf.Sign(wheel) * 0.1f, 0.5f, GrabReach + 0.5f);
+                if (Mathf.Abs(wheel) > 0.001f) _distance = Mathf.Clamp(_distance + Mathf.Sign(wheel) * 0.1f, 0.5f, ViewBehind() + GrabReach + 0.5f);
                 return;
             }
             Rigidbody aimed = null;
@@ -165,8 +165,8 @@ namespace BurnersUtilities
             if (On && _kind == Kind.None && g != null && g.enabled && g.ActiveStateName == "idle" && !Hands.Busy() && !RopeTool.Out && !NailGun.IsOut
                 && Cursor.lockState == CursorLockMode.Locked)
             {
-                var cam = Hands.Eye();
-                var ray = cam != null ? cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f)) : default(Ray);
+                var cam = Hands.View();
+                var ray = cam != null ? Hands.Aim(cam) : default(Ray);
                 if (cam != null && Hands.Pick(ray, GrabReach, out hit))
                 {
                     var rb = hit.collider.attachedRigidbody;
@@ -225,8 +225,14 @@ namespace BurnersUtilities
             _heaving = Input.GetMouseButton(0);
             Hands.HoldGrab(this);
             Prompt("Release: lmb\nMove: scroll");
-            Plugin.Verbose($"holding {rb.name} ({rb.mass:0} kg) by the hand at {hit.distance:0.00} m");
+            var view = Hands.View(); var eye = Hands.Eye();
+            bool standing = PlatformRide.Support(out var under, out _, out bool seated);
+            Plugin.Verbose($"holding {rb.name} ({rb.mass:0} kg) by the hand at {hit.distance:0.00} m from the view ({(view != null ? view.name : "none")}" +
+                           $"{(view != eye && eye != null ? ", the eye is " + eye.name : "")}): {Path(hit.collider.transform)}; player {(seated ? "seated" : standing ? "standing" : "in the air")}" +
+                           $" on {(under != null ? Path(under.transform) + " (" + under.mass.ToString("0") + " kg)" : "nothing that moves")}");
         }
+
+        private static string Path(Transform t) { var p = t.name; while (t.parent != null) { t = t.parent; p = t.name + "/" + p; } return p; }
 
         private void StopBody()
         {
@@ -237,6 +243,13 @@ namespace BurnersUtilities
             _item = null;
             Hands.ReleaseGrab(this);
             Prompt(null);
+        }
+
+        // how far behind the player's eye the view is (a third-person view): the aim reaches that much further
+        private static float ViewBehind()
+        {
+            var view = Hands.View(); var eye = Hands.Eye();
+            return view != null && eye != null ? Vector3.Distance(view.transform.position, eye.transform.position) : 0f;
         }
 
         // the game's own grab prompt (the 'ItemGrab' text its idle state clears), for bodies
@@ -635,9 +648,11 @@ namespace BurnersUtilities
             }
             else
             {
-                var cam = Hands.Eye();
+                // held on the aim: where the crosshair points, as far along it as it was taken
+                var cam = Hands.View();
                 if (cam == null) return;
-                target = cam.transform.position + cam.transform.forward * _distance;
+                var aim = Hands.Aim(cam);
+                target = aim.origin + aim.direction * _distance;
                 turn = cam.transform.rotation;
             }
             if (dt > 0f)

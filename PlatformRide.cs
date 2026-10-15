@@ -75,7 +75,15 @@ namespace BurnersUtilities
             feet = _player != null ? _player.transform.position : Vector3.zero;
             seated = false;
             if (_player == null) return true;
-            var parentBody = _player.transform.parent != null ? _player.transform.parent.GetComponentInParent<Rigidbody>() : null;
+            // the body the player is part of: the vehicle, the outermost body above them (a seat can carry a small body
+            // of its own, nested in the vehicle's; pushed, that moves the seat, and the player in it, not the vehicle),
+            // never their own camera rig
+            Rigidbody parentBody = null;
+            for (var t = _player.transform.parent; t != null; t = t.parent)
+            {
+                var rb = t.GetComponent<Rigidbody>();
+                if (rb != null && !Hands.PlayerRig(rb.transform)) parentBody = rb;
+            }
             if (_body == null || _body.isKinematic || parentBody != null)
             {
                 seated = true;

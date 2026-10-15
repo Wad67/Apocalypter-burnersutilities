@@ -28,6 +28,31 @@ namespace BurnersUtilities
             return cam != null && cam.isActiveAndEnabled ? cam : Camera.main;
         }
 
+        // what the player sees through: the camera the game picks things with (its MousePick aims with the main
+        // camera, at the screen's centre); in a car's third-person view that is the car's camera, not the player's eye
+        public static Camera View()
+        {
+            var main = Camera.main;
+            return main != null && main.isActiveAndEnabled ? main : Eye();
+        }
+
+        // the aim: from the view, through the crosshair
+        public static Ray Aim(Camera view) { return view.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f)); }
+
+        // the player and the rig that carries their camera (the camera holder and its pivot have bodies of their own):
+        // never something the hands take hold of, nor what the player sits in
+        public static bool PlayerRig(Transform t)
+        {
+            if (t == null) return false;
+            foreach (var name in Rig)
+            {
+                var g = Global(name);
+                if (g != null && t.IsChildOf(g.transform)) return true;
+            }
+            return false;
+        }
+        private static readonly string[] Rig = { "Player", "PlayerCameraHolder", "PlayerPivot" };
+
         // something in the hands (in use, or grabbed)
         public static bool Busy()
         {
@@ -54,19 +79,22 @@ namespace BurnersUtilities
             return (use != null && t.IsChildOf(use.transform)) || (player != null && t.IsChildOf(player.transform));
         }
 
-        // what the aim hits within reach: not the player, not triggers
+        // what the aim hits first, within reach of the player's eye (the aim may start behind them, in a third-person
+        // view): not the player or their camera rig, not triggers
         public static bool Pick(Ray ray, float reach, out RaycastHit hit)
         {
-            var player = Global("Player");
+            var eye = Eye();
+            Vector3 from = eye != null ? eye.transform.position : ray.origin;
+            float along = Vector3.Distance(from, ray.origin) + reach;   // the ray's length that can reach that far
             hit = default(RaycastHit);
             float best = float.MaxValue;
             bool found = false;
-            foreach (var h in Physics.RaycastAll(ray, reach, ~0, QueryTriggerInteraction.Ignore))
+            foreach (var h in Physics.RaycastAll(ray, along, ~0, QueryTriggerInteraction.Ignore))
             {
-                if (h.collider == null || (player != null && h.collider.transform.IsChildOf(player.transform))) continue;
+                if (h.collider == null || PlayerRig(h.collider.transform) || (h.collider.attachedRigidbody != null && PlayerRig(h.collider.attachedRigidbody.transform))) continue;
                 if (h.distance < best) { best = h.distance; hit = h; found = true; }
             }
-            return found;
+            return found && Vector3.Distance(from, hit.point) <= reach;
         }
 
         private static PlayMakerFSM Grab()
