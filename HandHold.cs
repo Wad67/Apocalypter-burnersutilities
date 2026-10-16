@@ -181,7 +181,7 @@ namespace BurnersUtilities
 
         // Something the game does with the click (or Use) there: a thing the aim meets before the body, or the body's
         // own collider, triggers included, that has an FSM listening for the mouse or the game's use and hover
-        // events. The click is left to it.
+        // events, or a script taking clicks the Unity way (OnMouseDown: another mod's hand crank). The click is left to it.
         private static readonly System.Collections.Generic.Dictionary<int, bool> Listens = new System.Collections.Generic.Dictionary<int, bool>();
         private static readonly string[] UseEvents = { "UseItem", "OverItem", "useDoor", "Use" };
 
@@ -197,6 +197,14 @@ namespace BurnersUtilities
             int id = go.GetInstanceID();
             if (Listens.TryGetValue(id, out bool known)) return known;
             bool listens = false;
+            // a script on it, or on a part it belongs to, that takes the click itself
+            for (var t = go.transform; t != null && !listens; t = t.parent)
+            {
+                foreach (var mb in t.GetComponents<MonoBehaviour>())
+                    if (mb != null && mb.GetType().GetMethod("OnMouseDown", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic) != null) { listens = true; break; }
+                if (t.GetComponent<Rigidbody>() != null) break;   // up to the body it is part of
+            }
+            if (!listens)
             foreach (var fsm in go.GetComponents<PlayMakerFSM>())
             {
                 if (fsm.FsmGlobalTransitions.Any(t => t.FsmEvent != null && UseEvents.Contains(t.FsmEvent.Name))) { listens = true; break; }

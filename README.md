@@ -75,7 +75,7 @@ Hoses aren't saved either.
 ### The rope table
 
 `BepInEx/config/BurnersUtilities.ropes.cfg` says what each kit ties: one section per kit, named by the kit's ID
-(its `ID` FSM, set in the kit's `.json`), with its name, breaking strength, thickness, and the game texture and
+(its `ID` FSM, set in the kit's `.lua`), with its name, breaking strength, thickness, and the game texture and
 pixel rows it is drawn with (or a plain colour), and its `stretch` at break. A kit with a `bore` ties hoses.
 `[liquid: <tag>]` sections give each liquid a hose carries, by the tag the game gives its containers, a viscosity
 and the sound it runs with. Another kit is another variant of the toolbox with its own ID and a section here.
@@ -114,7 +114,8 @@ when you grab it (the game would give it one when you drop it), as heavy as the 
 part. Look at it within 2 m with empty hands (the game's "grab: lmb" shows) and left click: you hold it by that
 point, at that distance (scroll: nearer or further), and it turns about your grip as it will. Left click lets go.
 Where the game does something with a click (a door, a handle, a control: anything listening for the mouse or for
-Use, in front of the body or on it), the click is the game's, not a grab.
+Use, in front of the body or on it), the click is the game's, not a grab. So is a click on another mod's control that
+takes clicks the Unity way (`OnMouseDown`: SigmaMod's levers and switches, Engine Sim's foot crank).
 
 **Your arm has a reach** (60 cm). Within it the hold gives; past it your arm is straight, and whatever pulls the
 thing pulls you. Every pull your hands make pulls back on you, as on an 80 kg body on its feet, and your feet push
@@ -133,7 +134,7 @@ length, or you let go.
 
 ## Nail gun
 
-The game's .22 pipe revolver under its own id, made by SigmaMod from `BurnersUtilities/sigma_assets/nail_gun.json`:
+The game's .22 pipe revolver under its own id, made by SigmaMod from `BurnersUtilities/sigma_assets/nail_gun.lua`:
 the **Nail Gun**. Found and sold where repair boxes are, half as likely as anything else there, and in Apocaspawner.
 Put it in a weapon slot and take it out like the revolver; it has the revolver's arms and model, but it doesn't
 shoot, reload or aim.
@@ -159,12 +160,12 @@ your hands pull on its nails like on anything else (see Hands): nailed to someth
 along; nailed to something fixed or too heavy, it stays where it is and you let go of it, unless you pull harder
 than the nails hold.
 
-The nails are in the item's own `NailGun` FSM in its `.json` (`NailLength`, `NailDiameter` in m, `NailShear` in
+The nails are in the item's own `NailGun` FSM in its `.lua` (`NailLength`, `NailDiameter` in m, `NailShear` in
 kN). Nails are not saved yet.
 
 ## Trailer hitches
 
-Two items, made by SigmaMod from `BurnersUtilities/sigma_assets/trailer_hitches.glb` and `.json`. They turn up
+Two items, made by SigmaMod from `BurnersUtilities/sigma_assets/trailer_hitches.glb` and `.lua` (the hitch itself is `burners/hitch.lua`, a Lua library other assets can use). They turn up
 where loose car parts do (every spawn list that holds the game's bumpers or car doors, each hitch as likely as
 one of those), and in Apocaspawner:
 
@@ -246,7 +247,7 @@ same order, with the same data. `PlayMaker.FastEvents` switches it off.
 
 ## Requirements
 
-SigmaMod (0.3.0 or later), for the rope, cable and hose kits, the nail gun and the trailer hitches. Without it the
+SigmaMod (2.0 or later: the items are Lua assets), for the rope, cable and hose kits, the nail gun and the trailer hitches. Without it the
 rest still works: Ride Along, the hands, the physlock fix and the speedups.
 
 ## Install
