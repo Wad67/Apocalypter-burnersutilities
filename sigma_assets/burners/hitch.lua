@@ -87,7 +87,7 @@ function hitch.item(o)
           actions = {
             { GetMass = { gameObject = "owner", storeResult = "{mass}" } },
             { GetOwner = { storeGameObject = "{owner}" } },
-            { EnableFSM = { gameObject = "owner", fsmName = "HitchUse", enable = false } },
+            { EnableFSM = { gameObject = "owner", fsmName = "HitchUse", enable = false, resetOnExit = false } },
             { NextFrameEvent = { sendEvent = "next" } },
           },
           transitions = { next = "vehPartRemoved" },
@@ -96,10 +96,10 @@ function hitch.item(o)
           actions = {
             { GameObjectCompareTag = { gameObject = "{owner}", tag = "vehPart", trueEvent = "bolted" } },
             { SendEvent = { eventTarget = "root/TrailerAttach", sendEvent = "unhitch" } },
-            { EnableFSM = { gameObject = "owner", fsmName = "HitchUse", enable = false } },
+            { EnableFSM = { gameObject = "owner", fsmName = "HitchUse", enable = false, resetOnExit = false } },
             { SetParent = { gameObject = "owner", parent = null, worldPositionStays = true } },
             { ColliderSetIsTrigger = { gameObject = "owner", isTrigger = false } },
-            { EnableFSM = { gameObject = "owner", fsmName = "Attach", enable = true } },
+            { EnableFSM = { gameObject = "owner", fsmName = "Attach", enable = true, resetOnExit = false } },
             { HasRigidBody = { gameObject = "owner", found = "{}", foundEvent = "loose" } },
             {
               AddComponent = { gameObject = "owner", component = "UnityEngine.Rigidbody", storeComponent = "{Rigidbody}" },
@@ -121,8 +121,8 @@ function hitch.item(o)
           actions = {
             { DestroyComponent = { gameObject = "owner", component = "UnityEngine.Rigidbody" } },
             { ColliderSetIsTrigger = { gameObject = "owner", isTrigger = true } },
-            { EnableFSM = { gameObject = "owner", fsmName = "Attach", enable = false } },
-            { EnableFSM = { gameObject = "owner", fsmName = "HitchUse", enable = true } },
+            { EnableFSM = { gameObject = "owner", fsmName = "Attach", enable = false, resetOnExit = false } },
+            { EnableFSM = { gameObject = "owner", fsmName = "HitchUse", enable = true, resetOnExit = false } },
             {
               GameObjectCompareTag = { gameObject = "{owner}", tag = "vehPart", falseEvent = "next", everyFrame = true },
             },

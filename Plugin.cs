@@ -21,7 +21,7 @@ namespace BurnersUtilities
     {
         public const string GUID = "com.burner.apocalypter.burnersutilities";
         public const string NAME = "Burner's Utilities";
-        public const string VERSION = "0.4.0";
+        public const string VERSION = "0.4.1";
 
         public static ManualLogSource Log;
         public static ConfigEntry<bool> RideAlongEntry, RopesEntry;
